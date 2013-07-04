@@ -71,6 +71,10 @@ let keys () =
 
 let (pubkey, privkey) = keys()
 
+let str2os (x: string) = [|for c in x -> (byte) c|]
+
+let os2str (octets: byte list) =  [for c in octets -> char c] |> List.fold(fun acc c -> acc + (string c)) ""
+
 let i2osp (x:bigint) len = // Convert a nonnegative integer to an octet string of a certain length (see RFC 3447)
     if x >= 256I**len then raise (System.ArgumentException("x must be < 256^len"))
     let mutable divrem = BigInteger.DivRem(x, 256I);
@@ -117,11 +121,9 @@ let mgf seed len = //Mask Generation Function, see Section B.2.1 of RFC 3447
 let rsaes_oaep_encrypt ((n,e) as key) M L = // RSA OAEP Encryption. See Section 7.1 of RFC 3447. M and L should be provided as octet strings
     let k = List.length (i2osp n (KEYSIZE*2)) // Length of modulus in octets
     if (Array.length M) > (k - 2*HLEN - 2) then raise (System.ArgumentException("message too long"))
-    printfn "%A" M
     let lHash = hash L
     let PS : byte array = Array.zeroCreate (k - (Array.length M) - 2 * HLEN - 2)
     let DB = Array.concat [| lHash; PS; [|0x01 |> byte|]; M|]
-    printfn "%d" (Array.length DB)
     let seed = List.toArray (i2osp (random HLEN) HLEN)
     let dbMask = mgf seed ((k-HLEN-1) |> bigint)
     let maskedDB = Array.map2 (fun x y -> x ^^^ y) DB dbMask
@@ -133,3 +135,20 @@ let rsaes_oaep_encrypt ((n,e) as key) M L = // RSA OAEP Encryption. See Section 
     let C = i2osp c k
     C
 
+let rsaes_oaep_decrypt ((n,d) as key) C L = // RSA OAEP Decryption. See Section 7.1 of RFC 3447. C and L should be provided as octet strings
+    let k = List.length (i2osp n (KEYSIZE*2))
+    if (List.length C) <> k then raise (System.ArgumentException("decryption error"))
+    let c = os2ip C 0I;
+    let m = rsadp c key
+    let EM = i2osp m k
+    let lHash = hash L
+    let maskedSeed = EM |> Seq.skip 1 |> Seq.take HLEN |> Seq.toList
+    let maskedDB = EM |> Seq.skip (1+HLEN) |> Seq.take (k-HLEN-1) |> Seq.toList
+    let seedMask = mgf (List.toArray maskedDB) (HLEN |> bigint)
+    let seed = Array.map2 (fun x y -> x^^^y) (List.toArray maskedSeed) seedMask
+    let dbMask = mgf seed ((k-HLEN-1) |> bigint)
+    let DB = Array.toList (Array.map2 (fun x y -> x^^^y) (List.toArray maskedDB) dbMask)
+    let lHash' = DB |> Seq.take HLEN |> Seq.toList
+    if lHash' <> (Array.toList lHash) then raise (System.ArgumentException("decryption error"))
+    let m = DB |> Seq.skipWhile (fun x -> x <> (byte) 1) |> Seq.skip 1 |> Seq.takeWhile (fun x -> true) |> Seq.toList
+    m
