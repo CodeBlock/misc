@@ -76,7 +76,7 @@ let keylen ((n: bigint), (exp:bigint)) =
 
 let (pubkey, privkey) = keys()
 
-let str2os (x: string) = [|for c in x -> (byte) c|]
+let str2os (x: string) = [for c in x -> (byte) c]
 
 let os2str (octets: byte list) =  [for c in octets -> char c] |> List.fold(fun acc c -> acc + (string c)) ""
 
@@ -110,35 +110,34 @@ let rsadp c (n, d) = // RSA Decryption Primitive
     if  c < 0I || c > (n-1I) then raise (System.ArgumentException("c out of range"))
     modexp c d n
 
-let hash (bytes: byte array) = (SHA256.Create()).ComputeHash(bytes);
+let hash (bytes: byte list) = Array.toList ((SHA256.Create()).ComputeHash((List.toArray bytes)));
 
 let mgf seed len = //Mask Generation Function, see Section B.2.1 of RFC 3447
     if len > 2I**32 * (HLEN|>bigint) then raise (System.ArgumentException("mask too long"))
     let lenfloat = len |> float;
     let hlenfloat = HLEN |> float;
     let final = ceil((lenfloat/hlenfloat)-1.0) |> int
-    let x = [for c in [0..final] ->  hash (Array.concat [|seed; List.toArray (i2osp (c|>bigint) 4)|])]
-    let T = Array.concat x
-    T.[0..((len-1I)|>int)]
+    let x = [for c in [0..final] ->  hash (List.concat [seed; i2osp (c|>bigint) 4])]
+    let T = List.concat x
+    T |> Seq.take (len|>int) |> Seq.toList
 
 
 
-let rsaes_oaep_encrypt ((n,e) as key) M L = // RSA OAEP Encryption. See Section 7.1 of RFC 3447. M and L should be provided as octet strings
+let rsaes_oaep_encrypt ((n,e) as key) (M: byte list) L = // RSA OAEP Encryption. See Section 7.1 of RFC 3447. M and L should be provided as octet strings 
     let k = List.length (i2osp n (KEYSIZE*2)) // Length of modulus in octets
-    if (Array.length M) > (k - 2*HLEN - 2) then raise (System.ArgumentException("message too long"))
+    if (M.Length) > (k - 2*HLEN - 2) then raise (System.ArgumentException("message too long"))
     let lHash = hash L
-    let PS : byte array = Array.zeroCreate (k - (Array.length M) - 2 * HLEN - 2)
-    let DB = Array.concat [| lHash; PS; [|0x01 |> byte|]; M|]
-    let seed = List.toArray (i2osp (random HLEN) HLEN)
+    let PS = List.init (k - (M.Length) - 2 * HLEN - 2) (fun x -> byte 0)
+    let DB = List.concat [lHash; PS; [byte 1]; M]
+    let seed = i2osp (random HLEN) HLEN
     let dbMask = mgf seed ((k-HLEN-1) |> bigint)
-    let maskedDB = Array.map2 (fun x y -> x ^^^ y) DB dbMask
+    let maskedDB = List.map2 (fun x y -> x ^^^ y) DB dbMask
     let seedMask = mgf maskedDB (HLEN|>bigint)
-    let maskedSeed = Array.map2 (fun x y -> x ^^^ y) seed seedMask
-    let EM = Array.concat [| [| (byte) 0 |]; maskedSeed; maskedDB |]
-    let m = os2ip (Array.toList EM) 0I
+    let maskedSeed = List.map2 (fun x y -> x ^^^ y) seed seedMask
+    let EM = List.concat [[byte 0]; maskedSeed; maskedDB]
+    let m = os2ip EM 0I
     let c = rsaep m key
-    let C = i2osp c k
-    C
+    i2osp c k
 
 let rsaes_oaep_decrypt ((n,d) as key) C L = // RSA OAEP Decryption. See Section 7.1 of RFC 3447. C and L should be provided as octet strings
     let k = List.length (i2osp n (KEYSIZE*2))
@@ -149,11 +148,10 @@ let rsaes_oaep_decrypt ((n,d) as key) C L = // RSA OAEP Decryption. See Section 
     let lHash = hash L
     let maskedSeed = EM |> Seq.skip 1 |> Seq.take HLEN |> Seq.toList
     let maskedDB = EM |> Seq.skip (1+HLEN) |> Seq.take (k-HLEN-1) |> Seq.toList
-    let seedMask = mgf (List.toArray maskedDB) (HLEN |> bigint)
-    let seed = Array.map2 (fun x y -> x^^^y) (List.toArray maskedSeed) seedMask
+    let seedMask = mgf maskedDB (HLEN |> bigint)
+    let seed = List.map2 (fun x y -> x^^^y) maskedSeed seedMask
     let dbMask = mgf seed ((k-HLEN-1) |> bigint)
-    let DB = Array.toList (Array.map2 (fun x y -> x^^^y) (List.toArray maskedDB) dbMask)
+    let DB = List.map2 (fun x y -> x^^^y) maskedDB dbMask
     let lHash' = DB |> Seq.take HLEN |> Seq.toList
-    if lHash' <> (Array.toList lHash) then raise (System.ArgumentException("decryption error"))
-    let m = DB |> Seq.skipWhile (fun x -> x <> (byte) 1) |> Seq.skip 1 |> Seq.takeWhile (fun x -> true) |> Seq.toList
-    m
+    if lHash' <> lHash then raise (System.ArgumentException("decryption error"))
+    DB |> Seq.skip HLEN |> Seq.skipWhile (fun x -> x <> (byte) 1) |> Seq.skip 1 |> Seq.takeWhile (fun x -> true) |> Seq.toList
