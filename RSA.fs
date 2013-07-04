@@ -47,13 +47,12 @@ let coprime n = // Find a coprime of n (gcd(n, x) = 1)
         test <- random KEYSIZE
     test
 
-let prime () = // Find a (probable) prime
-    let mutable x = random KEYSIZE
-    let mutable y = coprime x
-    while modexp y (x-1I) x <> 1I do
-        x <- random KEYSIZE
-        y <- coprime x
-    x
+let rec prime () = // Find a (probable) prime
+    let x = random KEYSIZE
+    let y = coprime x
+    if modexp y (x-1I) x = 1I then x
+    else prime ()
+
 
 let modmultinv (e:bigint) (n:bigint) = // Find the modular multiplicative inverse of e mod n. That is, e * x = 1 (mod n)
     let (x,_) = ext_gcd e n
