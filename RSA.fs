@@ -2,7 +2,8 @@
 
 let bigint (x:int) = bigint(x) // Oddities  with F#
 
-let KEYSIZE = 32
+let KEYSIZE = 64
+let HLEN = 32 // Length in octets of hash output, in this case SHA-256
 
 
 let modexp a b n = //from Rosetta Code, calculates a^b (mod n)
@@ -84,7 +85,7 @@ let i2osp (x:bigint) len = // Convert a nonnegative integer to an octet string o
     List.rev octets
 
 
-let rec os2ip (octets : byte list) (n: bigint) = 
+let rec os2ip (octets : byte list) (n: bigint) = // Convert an octet string to a nonnegative integer.
     match octets with
     | [] -> n
     | X::XS ->
@@ -92,21 +93,43 @@ let rec os2ip (octets : byte list) (n: bigint) =
     os2ip XS acc
 
 
-let encrypt c (n, e) =
-    modexp c e n 
+let rsaep m (n, e) = // RSA Encryption Primitive    
+    if m < 0I || m > (n-1I) then raise (System.ArgumentException("m out of range"))
+    modexp m e n 
    
-let decrypt c (n,d) = 
+let rsadp c (n, d) = // RSA Decryption Primitive
+    if  c < 0I || c > (n-1I) then raise (System.ArgumentException("c out of range"))
     modexp c d n
 
-//I am very much not sure if I'm really doing encryption and decryption right, but it works, at least.
-let encryptMsg (s: string) key = 
-    let x = [for c in s -> (int)c |> bigint]
-    [for m in x -> (encrypt m key)]
+let hash (bytes: byte array) = (SHA256.Create()).ComputeHash(bytes);
 
-let decryptMsg (s:bigint list) key = 
-    let x = [for c in s -> (decrypt c key)]
-    [for c in x -> (int)c |> char] |> List.fold(fun acc c -> acc + (string c)) ""
+let mgf seed len = //Mask Generation Function, see Section B.2.1 of RFC 3447
+    if len > 2I**32 * (HLEN|>bigint) then raise (System.ArgumentException("mask too long"))
+    let lenfloat = len |> float;
+    let hlenfloat = HLEN |> float;
+    let final = ceil((lenfloat/hlenfloat)-1.0) |> int
+    let x = [for c in [0..final] ->  hash (Array.concat [|seed; List.toArray (i2osp (c|>bigint) 4)|])]
+    let T = Array.concat x
+    T.[0..((len-1I)|>int)]
 
-let keylen ((n: bigint), (exp:bigint)) = 
-    Array.length(n.ToByteArray())*8 + Array.length(exp.ToByteArray())*8
+
+
+let rsaes_oaep_encrypt ((n,e) as key) M L = // RSA OAEP Encryption. See Section 7.1 of RFC 3447. M and L should be provided as octet strings
+    let k = List.length (i2osp n (KEYSIZE*2)) // Length of modulus in octets
+    if (Array.length M) > (k - 2*HLEN - 2) then raise (System.ArgumentException("message too long"))
+    printfn "%A" M
+    let lHash = hash L
+    let PS : byte array = Array.zeroCreate (k - (Array.length M) - 2 * HLEN - 2)
+    let DB = Array.concat [| lHash; PS; [|0x01 |> byte|]; M|]
+    printfn "%d" (Array.length DB)
+    let seed = List.toArray (i2osp (random HLEN) HLEN)
+    let dbMask = mgf seed ((k-HLEN-1) |> bigint)
+    let maskedDB = Array.map2 (fun x y -> x ^^^ y) DB dbMask
+    let seedMask = mgf maskedDB (HLEN|>bigint)
+    let maskedSeed = Array.map2 (fun x y -> x ^^^ y) seed seedMask
+    let EM = Array.concat [| [| (byte) 0 |]; maskedSeed; maskedDB |]
+    let m = os2ip (Array.toList EM) 0I
+    let c = rsaep m key
+    let C = i2osp c k
+    C
 
