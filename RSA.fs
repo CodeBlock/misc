@@ -68,13 +68,35 @@ let keys () =
     let d = modmultinv e phi
     ((n,e), (n,d))
 
+let (pubkey, privkey) = keys()
+
+let i2osp (x:bigint) len = // Convert a nonnegative integer to an octet string of a certain length (see RFC 3447)
+    if x >= 256I**len then raise (System.ArgumentException("x must be < 256^len"))
+    let mutable divrem = BigInteger.DivRem(x, 256I);
+    let mutable octets : byte list = []
+    while (fst divrem) <> 0I do
+        octets <- List.append octets [(snd divrem) |> byte]
+        divrem <- BigInteger.DivRem((fst divrem), 256I)
+
+    octets <- List.append octets [(snd divrem) |> byte]
+    divrem <- BigInteger.DivRem((fst divrem), 256I)
+    while List.length octets < len do octets <- List.append octets [(byte 0)]
+    List.rev octets
+
+
+let rec os2ip (octets : byte list) (n: bigint) = 
+    match octets with
+    | [] -> n
+    | X::XS ->
+    let acc = n + (X |> int |> bigint) * (256I ** (List.length XS))
+    os2ip XS acc
+
+
 let encrypt c (n, e) =
     modexp c e n 
    
 let decrypt c (n,d) = 
     modexp c d n
-
-let (pubkey, privkey) = keys()
 
 //I am very much not sure if I'm really doing encryption and decryption right, but it works, at least.
 let encryptMsg (s: string) key = 
