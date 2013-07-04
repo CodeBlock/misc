@@ -2,7 +2,7 @@
 
 let bigint (x:int) = bigint(x) // Oddities  with F#
 
-let KEYSIZE = 64
+let KEYSIZE = 32
 
 
 let modexp a b n = //from Rosetta Code, calculates a^b (mod n)
@@ -46,20 +46,23 @@ let coprime n = // Find a coprime of n (gcd(n, x) = 1)
     while ((gcd n test) <> 1I) do 
         test <- random KEYSIZE
     test
-let rec prime k = // Find a (probable) prime
-    let x = random KEYSIZE
-    let y = coprime x
-    if modexp y (x-1I) x = 1I then x
-    else prime k
+
+let prime () = // Find a (probable) prime
+    let mutable x = random KEYSIZE
+    let mutable y = coprime x
+    while modexp y (x-1I) x <> 1I do
+        x <- random KEYSIZE
+        y <- coprime x
+    x
 
 let modmultinv (e:bigint) (n:bigint) = // Find the modular multiplicative inverse of e mod n. That is, e * x = 1 (mod n)
     let (x,_) = ext_gcd e n
     modulo x n
 
-let keys = 
-    let p = prime 2 // Pick an arbitrary large prime
-    let mutable q = prime 2 // Pick another one
-    while p = q do q <- prime 2 // Make sure they're different
+let keys () = 
+    let p = prime() // Pick an arbitrary large prime
+    let mutable q = prime() // Pick another one
+    while p = q do q <- prime() // Make sure they're different
     let n = p*q // This number is used as the modulus for the keys
     let phi = (p-1I)*(q-1I) // Euler's totient function. I am not very sure why this is used, but it is, so there
     let e = 65537I // 65537 is prime and therefore coprime to everything, and suitably large
@@ -72,7 +75,7 @@ let encrypt c (n, e) =
 let decrypt c (n,d) = 
     modexp c d n
 
-let (pubkey, privkey) = keys
+let (pubkey, privkey) = keys()
 
 //I am very much not sure if I'm really doing encryption and decryption right, but it works, at least.
 let encryptMsg (s: string) key = 
@@ -85,3 +88,4 @@ let decryptMsg (s:bigint list) key =
 
 let keylen ((n: bigint), (exp:bigint)) = 
     Array.length(n.ToByteArray())*8 + Array.length(exp.ToByteArray())*8
+
