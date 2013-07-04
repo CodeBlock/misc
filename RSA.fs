@@ -1,4 +1,5 @@
 ﻿open System.Numerics
+open System.Security.Cryptography
 
 let bigint (x:int) = bigint(x) // Oddities  with F#
 
@@ -68,6 +69,10 @@ let keys () =
     let e = 65537I // 65537 is prime and therefore coprime to everything, and suitably large
     let d = modmultinv e phi
     ((n,e), (n,d))
+
+let keylen ((n: bigint), (exp:bigint)) = 
+    Array.length(n.ToByteArray())*8 + Array.length(exp.ToByteArray())*8
+
 
 let (pubkey, privkey) = keys()
 
