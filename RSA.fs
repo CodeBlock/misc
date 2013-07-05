@@ -5,6 +5,7 @@ let bigint (x:int) = bigint(x) // Oddities  with F#
 
 let KEYSIZE = 64
 let HLEN = 32 // Length in octets of hash output, in this case SHA-256
+let SLEN = 256 // Length in octets of salt for EMSA
 
 
 let modexp a b n = //from Rosetta Code, calculates a^b (mod n)
@@ -90,7 +91,7 @@ let i2osp (x:bigint) len = // Convert a nonnegative integer to an octet string o
 
     octets <- List.append octets [(snd divrem) |> byte]
     divrem <- BigInteger.DivRem((fst divrem), 256I)
-    while List.length octets < len do octets <- List.append octets [(byte 0)]
+    while List.length octets < len do octets <- List.append octets [0uy]
     List.rev octets
 
 
@@ -105,10 +106,14 @@ let rec os2ip (octets : byte list) (n: bigint) = // Convert an octet string to a
 let rsaep m (n, e) = // RSA Encryption Primitive    
     if m < 0I || m > (n-1I) then raise (System.ArgumentException("m out of range"))
     modexp m e n 
+
+let rsasp = rsaep // RSA Signing Primitive. Identical to RSAEP
    
 let rsadp c (n, d) = // RSA Decryption Primitive
     if  c < 0I || c > (n-1I) then raise (System.ArgumentException("c out of range"))
     modexp c d n
+
+let rsavp = rsadp // RSA Verification Primitive. Identical to RSADP
 
 let hash (bytes: byte list) = Array.toList ((SHA256.Create()).ComputeHash((List.toArray bytes)));
 
@@ -127,14 +132,14 @@ let rsaes_oaep_encrypt ((n,e) as key) (M: byte list) L = // RSA OAEP Encryption.
     let k = List.length (i2osp n (KEYSIZE*2)) // Length of modulus in octets
     if (M.Length) > (k - 2*HLEN - 2) then raise (System.ArgumentException("message too long"))
     let lHash = hash L
-    let PS = List.init (k - (M.Length) - 2 * HLEN - 2) (fun x -> byte 0)
-    let DB = List.concat [lHash; PS; [byte 1]; M]
+    let PS = List.init (k - (M.Length) - 2 * HLEN - 2) (fun x -> 0uy)
+    let DB = List.concat [lHash; PS; [1uy]; M]
     let seed = i2osp (random HLEN) HLEN
     let dbMask = mgf seed ((k-HLEN-1) |> bigint)
     let maskedDB = List.map2 (fun x y -> x ^^^ y) DB dbMask
     let seedMask = mgf maskedDB (HLEN|>bigint)
     let maskedSeed = List.map2 (fun x y -> x ^^^ y) seed seedMask
-    let EM = List.concat [[byte 0]; maskedSeed; maskedDB]
+    let EM = List.concat [[0uy]; maskedSeed; maskedDB]
     let m = os2ip EM 0I
     let c = rsaep m key
     i2osp c k
@@ -154,4 +159,37 @@ let rsaes_oaep_decrypt ((n,d) as key) C L = // RSA OAEP Decryption. See Section 
     let DB = List.map2 (fun x y -> x^^^y) maskedDB dbMask
     let lHash' = DB |> Seq.take HLEN |> Seq.toList
     if lHash' <> lHash then raise (System.ArgumentException("decryption error"))
-    DB |> Seq.skip HLEN |> Seq.skipWhile (fun x -> x <> (byte) 1) |> Seq.skip 1 |> Seq.takeWhile (fun x -> true) |> Seq.toList
+    DB |> Seq.skip HLEN |> Seq.skipWhile (fun x -> x <> 1uy) |> Seq.skip 1 |> Seq.takeWhile (fun x -> true) |> Seq.toList
+
+let salt len = i2osp (random len) len
+
+let emsa_pss_encode M emBits (salt: byte list) = //EMSA Encoding. See Section 9.1.1 of RFC 3447
+    let emLen = emBits/8
+    let mHash = hash M
+    if emLen < HLEN + salt.Length + 2 then raise (System.ArgumentException("encoding error"))
+    let M' = List.concat [List.init 8 (fun x -> 0uy); mHash; salt]
+    let H = hash M'
+    let PS = List.init (emLen - salt.Length - HLEN - 2) (fun x -> 0uy)
+    let DB = List.concat [PS; [1uy]; salt]
+    let dbMask = mgf H ((bigint emLen) - (bigint HLEN) - 1I)
+    let maskedDB = List.map2 (fun x y -> x ^^^ y) DB dbMask
+    List.concat [maskedDB; H;[byte 0xbc]]
+
+let emsa_pss_verify (M: byte list) (EM: byte list) emBits = // EMSA Verification. See Section 9.1.2 of RFC 3447
+    let emLen = emBits/8
+    let mHash = hash M
+    if emLen < HLEN + SLEN + 2 then raise (System.ArgumentException("inconsistent"))
+    if EM.[EM.Length-1] <> (byte 0xbc) then raise (System.ArgumentException("inconsistent"))
+    let maskedDB = EM |> Seq.take (emLen - HLEN - 1) |> Seq.toList
+    let H = EM |> Seq.skip (emLen - HLEN - 1) |> Seq.take HLEN |> Seq.toList
+    let dbMask = mgf H ((bigint emLen) - (bigint HLEN) - 1I)
+    let DB = List.map2 (fun x y -> x ^^^ y) maskedDB dbMask
+    let test = DB |> Seq.take (emLen - HLEN - SLEN - 1) |> Seq.toList
+    if test.[test.Length-1] <> 1uy then raise (System.ArgumentException("inconsistent test"))
+    let zeroes = test |> Seq.take (test.Length-1) |> Seq.toList
+    if List.exists (fun x -> x <> 0uy) zeroes then raise (System.ArgumentException("inconsistent exists"))
+    let salt = DB |> Seq.skip (DB.Length - SLEN) |> Seq.take SLEN |> Seq.toList
+    let M' = List.concat [List.init 8 (fun x -> 0uy); mHash; salt]
+    let H' = hash M'
+    if H <> H' then raise (System.ArgumentException("inconsistent H"))
+    true
