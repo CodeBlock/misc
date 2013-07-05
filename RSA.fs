@@ -5,7 +5,7 @@ let bigint (x:int) = bigint(x) // Oddities  with F#
 
 let KEYSIZE = 64
 let HLEN = 32 // Length in octets of hash output, in this case SHA-256
-let SLEN = 256 // Length in octets of salt for EMSA
+let SLEN = 16 // Length in octets of salt for EMSA
 
 
 let modexp a b n = //from Rosetta Code, calculates a^b (mod n)
@@ -185,11 +185,24 @@ let emsa_pss_verify (M: byte list) (EM: byte list) emBits = // EMSA Verification
     let dbMask = mgf H ((bigint emLen) - (bigint HLEN) - 1I)
     let DB = List.map2 (fun x y -> x ^^^ y) maskedDB dbMask
     let test = DB |> Seq.take (emLen - HLEN - SLEN - 1) |> Seq.toList
-    if test.[test.Length-1] <> 1uy then raise (System.ArgumentException("inconsistent test"))
+    if test.[test.Length-1] <> 1uy then raise (System.ArgumentException("inconsistent"))
     let zeroes = test |> Seq.take (test.Length-1) |> Seq.toList
-    if List.exists (fun x -> x <> 0uy) zeroes then raise (System.ArgumentException("inconsistent exists"))
+    if List.exists (fun x -> x <> 0uy) zeroes then raise (System.ArgumentException("inconsistent"))
     let salt = DB |> Seq.skip (DB.Length - SLEN) |> Seq.take SLEN |> Seq.toList
     let M' = List.concat [List.init 8 (fun x -> 0uy); mHash; salt]
     let H' = hash M'
-    if H <> H' then raise (System.ArgumentException("inconsistent H"))
+    if H <> H' then raise (System.ArgumentException("inconsistent"))
     true
+
+let rsassa_pss_sign ((n, d) as key) M = // RSA Signing, see Section 8.1.1 of RFC 3447
+    let EM = emsa_pss_encode M ((List.length (i2osp n (KEYSIZE*2)))*8 - 1) (salt SLEN)
+    let m = os2ip EM 0I
+    let s = rsasp m key
+    i2osp s (KEYSIZE*2)
+
+let rsassa_pss_verify ((n,e) as key) M S = // RSA Verification, see Section 8.1.2 of RFC 3447
+    let s = os2ip S 0I
+    let m = rsavp s key
+    let emLen = ((List.length (i2osp n (KEYSIZE*2))*8) - 1)/8
+    let em = i2osp m emLen
+    emsa_pss_verify M em ((List.length (i2osp n (KEYSIZE*2)))*8 - 1)
