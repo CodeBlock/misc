@@ -32,7 +32,7 @@ let random n = // Generate a random number n bytes long
     abs (new BigInteger (bytes))
 
 let rec ext_gcd (x:bigint) (y:bigint) = // Solve for the equation ax + by = gcd(a,b). When a nd b are coprime (i.e
-                                        // gcd(a,b) = 0, x is the modular multiplicative inverse of a modulo b. 
+                                        // gcd(a,b) = 1, x is the modular multiplicative inverse of a modulo b. 
                                         // This is crucial for calculating the private exponent. Implements the 
                                         // Extended Euclidean algorithm.
     if y = 0I then
